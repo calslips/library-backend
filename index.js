@@ -58,8 +58,8 @@ const typeDefs = gql`
 
 const resolvers = {
   Author: {
-    bookCount: (root) =>
-      books.filter((b) => b.author === root.name).length
+    bookCount: async (root) =>
+      await Book.collection.countDocuments({ author: { $in: [root._id] } })
   },
   Query: {
     bookCount: () => Book.collection.countDocuments(),
