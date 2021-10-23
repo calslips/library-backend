@@ -58,8 +58,8 @@ const typeDefs = gql`
 
 const resolvers = {
   Author: {
-    bookCount: async (root) =>
-      await Book.collection.countDocuments({ author: { $in: [root._id] } })
+    bookCount: (root) =>
+      Book.collection.countDocuments({ author: { $in: [root._id] } })
   },
   Query: {
     bookCount: () => Book.collection.countDocuments(),
@@ -98,17 +98,15 @@ const resolvers = {
       author = await newAuthor(args.author)
       return newBook(author)
     },
-    editAuthor: (root, args) => {
-      const author = authors.find((a) => a.name === args.name)
+    editAuthor: async (root, args) => {
+      const author = await Author.findOne({ name: args.name })
 
       if (!author) {
         return null
       }
-      const updateBorn = { ...author, born: args.setBornTo }
-      authors = authors.map((a) =>
-        a.name === args.name ? updateBorn : a
-      )
-      return updateBorn
+      author.born = args.setBornTo
+      await author.save()
+      return author
     }
   }
 }
