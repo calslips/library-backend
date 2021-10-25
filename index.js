@@ -64,16 +64,21 @@ const resolvers = {
   Query: {
     bookCount: () => Book.collection.countDocuments(),
     authorCount: () => Author.collection.countDocuments(),
-    allBooks: (root, args) => {
+    allBooks: async (root, args) => {
       if (args.author && args.genre) {
-        let authorsBooks = books.filter((b) => b.author === args.author)
-        return authorsBooks.filter((b) => b.genres.includes(args.genre))
+        let author = await Author.find({ name: args.author })
+        return Book
+          .find({ author: author[0]._id, genres: { $in: [args.genre] } })
+          .populate('author')
       } else if (args.author) {
-        return books.filter((b) => b.author === args.author)
+        let author = await Author.find({ name: args.author })
+        return Book
+          .find({ author: author[0]._id })
+          .populate('author')
       } else if (args.genre) {
-        return books.filter((b) => b.genres.includes(args.genre))
+        return Book.find({ genres: { $in: [args.genre] } }).populate('author')
       } else {
-        return books
+        return Book.find({}).populate('author')
       }
     },
     allAuthors: () => Author.find({})
