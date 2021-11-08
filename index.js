@@ -10,6 +10,7 @@ const { createServer } = require('http')
 const { execute, subscribe } = require('graphql')
 const { SubscriptionServer } = require('subscriptions-transport-ws')
 const { makeExecutableSchema } = require('@graphql-tools/schema')
+const { PubSub } = require('graphql-subscriptions')
 const mongoose = require('mongoose')
 const jwt = require('jsonwebtoken')
 
@@ -28,6 +29,8 @@ mongoose.connect(MONGODB_URI, {
     console.log('connected to MongoDB'))
   .catch((error) =>
     console.log('error connecting to MongoDB:', error.message))
+
+const pubsub = new PubSub()
 
 const typeDefs = gql`
   type Author {
@@ -86,6 +89,10 @@ const typeDefs = gql`
       password: String!
     ): Token
   }
+
+  type Subscription {
+    bookAdded: Book!
+  }
 `
 
 const resolvers = {
@@ -137,10 +144,14 @@ const resolvers = {
 
       try {
         if (author) {
-          return newBook(author)
+          let book = newBook(author)
+          pubsub.publish('BOOK_ADDED', { bookAdded: book })
+          return book
         }
         author = await newAuthor(args.author)
-        return newBook(author)
+        let book = newBook(author)
+        pubsub.publish('BOOK_ADDED', { bookAdded: book })
+        return book
       } catch (error) {
         throw new UserInputError(error.message, {
           invalidArgs: args
@@ -191,6 +202,11 @@ const resolvers = {
       }
       return { value: jwt.sign(tokenPayload, JWT_SECRET) }
     }
+  },
+  Subscription: {
+    bookAdded: {
+      subscribe: () => pubsub.asyncIterator(['BOOK_ADDED'])
+    }
   }
 }
 
@@ -198,6 +214,15 @@ const startApolloServer = (async () => {
   const app = express()
   const httpServer = createServer(app)
   const schema = makeExecutableSchema({ typeDefs, resolvers })
+
+  const subscriptionServer = SubscriptionServer.create({
+    schema,
+    execute,
+    subscribe
+  }, {
+    server: httpServer,
+    path: '/'
+  })
 
   const server = new ApolloServer({
     schema,
@@ -220,15 +245,6 @@ const startApolloServer = (async () => {
         }
       }
     }]
-  })
-
-  const subscriptionServer = SubscriptionServer.create({
-    schema,
-    execute,
-    subscribe
-  }, {
-    server: httpServer,
-    path: server.graphqlPath
   })
 
   await server.start()
