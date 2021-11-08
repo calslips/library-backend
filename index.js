@@ -7,6 +7,9 @@ const {
 const { ApolloServerPluginDrainHttpServer } = require('apollo-server-core')
 const express = require('express')
 const { createServer } = require('http')
+const { execute, subscribe } = require('graphql')
+const { SubscriptionServer } = require('subscriptions-transport-ws')
+const { makeExecutableSchema } = require('@graphql-tools/schema')
 const mongoose = require('mongoose')
 const jwt = require('jsonwebtoken')
 
@@ -194,10 +197,10 @@ const resolvers = {
 const startApolloServer = (async () => {
   const app = express()
   const httpServer = createServer(app)
+  const schema = makeExecutableSchema({ typeDefs, resolvers })
 
   const server = new ApolloServer({
-    typeDefs,
-    resolvers,
+    schema,
     context: async ({ req }) => {
       const auth = req ? req.headers.authorization : null
       if (auth && auth.toLowerCase().startsWith('bearer ')) {
@@ -208,7 +211,24 @@ const startApolloServer = (async () => {
         return { currentUser }
       }
     },
-    plugins: [ApolloServerPluginDrainHttpServer({ httpServer })]
+    plugins: [{
+      async serverWillStart() {
+        return {
+          async drainServer() {
+            subscriptionServer.close()
+          }
+        }
+      }
+    }]
+  })
+
+  const subscriptionServer = SubscriptionServer.create({
+    schema,
+    execute,
+    subscribe
+  }, {
+    server: httpServer,
+    path: server.graphqlPath
   })
 
   await server.start()
