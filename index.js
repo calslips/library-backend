@@ -13,6 +13,7 @@ const { makeExecutableSchema } = require('@graphql-tools/schema')
 const { PubSub } = require('graphql-subscriptions')
 const mongoose = require('mongoose')
 const jwt = require('jsonwebtoken')
+const DataLoader = require('dataloader')
 
 const Author = require('./models/author')
 const Book = require('./models/book')
@@ -29,6 +30,8 @@ mongoose.connect(MONGODB_URI, {
     console.log('connected to MongoDB'))
   .catch((error) =>
     console.log('error connecting to MongoDB:', error.message))
+
+mongoose.set('debug', true)
 
 const pubsub = new PubSub()
 
@@ -97,12 +100,18 @@ const typeDefs = gql`
 
 const resolvers = {
   Author: {
-    bookCount: (root) =>
-      Book.collection.countDocuments({ author: { $in: [root._id] } })
+    /* below constains n+1 problem, but updates view when adding books */
+    // bookCount: (root) =>
+    //   Book.collection.countDocuments({ author: { $in: [root._id] } })
+
+    /* below solves n+1 problem using dataloader, but view does NOT
+    update view when adding books */
+    bookCount: async (root, args, context) =>
+      await context.batchBookCount.load(root._id)
   },
   Query: {
-    bookCount: () => Book.collection.countDocuments(),
-    authorCount: () => Author.collection.countDocuments(),
+    bookCount: async () => await Book.collection.countDocuments(),
+    authorCount: async () => await Author.collection.countDocuments(),
     allBooks: async (root, args) => {
       if (args.author && args.genre) {
         let author = await Author.find({ name: args.author })
@@ -120,8 +129,8 @@ const resolvers = {
         return Book.find({}).populate('author')
       }
     },
-    allAuthors: () => Author.find({}),
-    me: (root, args, context) => context.currentUser
+    allAuthors: async (root, args, context) => await Author.find({}),
+    me: async (root, args, context) => await context.currentUser
   },
   Mutation: {
     addBook: async (root, args, context) => {
@@ -214,6 +223,13 @@ const startApolloServer = (async () => {
   const app = express()
   const httpServer = createServer(app)
   const schema = makeExecutableSchema({ typeDefs, resolvers })
+  const batchBookCount = new DataLoader(async (authorIds) =>
+    authorIds.map(async (authorId) =>
+      await Book.find({ author: { $in: authorId } })
+        .then(books => books.length)
+    ),
+    {cacheKeyFn: key => key.toString()}
+  )
 
   const subscriptionServer = SubscriptionServer.create({
     schema,
@@ -228,12 +244,21 @@ const startApolloServer = (async () => {
     schema,
     context: async ({ req }) => {
       const auth = req ? req.headers.authorization : null
+
       if (auth && auth.toLowerCase().startsWith('bearer ')) {
         const decodedToken = jwt.verify(
           auth.split(' ')[1], JWT_SECRET
         )
         const currentUser = await User.findById(decodedToken.id)
-        return { currentUser }
+
+        return {
+          currentUser,
+          batchBookCount,
+        }
+      }
+
+      return {
+        batchBookCount
       }
     },
     plugins: [{
